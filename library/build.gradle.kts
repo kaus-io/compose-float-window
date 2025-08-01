@@ -45,13 +45,17 @@ android {
 }
 
 dependencies {
-    runtimeOnly(libs.androidx.activity.compose)
+    implementation(libs.androidx.activity.compose)
 }
 
-project.afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("release") {
+publishing {
+    publications {
+        create<MavenPublication>("release") {
+            groupId = "com.zxhhyj"
+            artifactId = "ComposeFloatWindow"
+            version = "1.0"
+
+            afterEvaluate {
                 from(components["release"])
             }
         }
