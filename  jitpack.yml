@@ -1,0 +1,6 @@
+jdk:
+  - openjdk21
+
+install:
+  - ./gradlew :library:build :library:publishToMavenLocal
+  - find . -name "*.aar"
