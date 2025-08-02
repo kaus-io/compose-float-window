@@ -49,7 +49,7 @@ import kotlinx.coroutines.launch
 // copied from https://github.com/only52607/compose-floating-window/blob/main/library/src/main/java/com/github/only52607/compose/window/ComposeFloatingWindow.kt
 // copied form https://github.com/FunnySaltyFish/Transtation-KMP/composeApp/src/androidMain/kotlin/com/github/only52607/compose/window/ComposeFloatingWindow.kt
 
-class ComposeFloatingWindow(
+class ComposeFloatWindow(
     private val context: Context,
     val windowParams: WindowManager.LayoutParams = WindowManager.LayoutParams().apply {
         height = WindowManager.LayoutParams.WRAP_CONTENT
@@ -71,7 +71,7 @@ class ComposeFloatingWindow(
     override val defaultViewModelProviderFactory: ViewModelProvider.Factory by lazy {
         SavedStateViewModelFactory(
             context.applicationContext as Application,
-            this@ComposeFloatingWindow,
+            this@ComposeFloatWindow,
             null
         )
     }
@@ -84,8 +84,8 @@ class ComposeFloatingWindow(
                 application
             )
         }
-        set(SAVED_STATE_REGISTRY_OWNER_KEY, this@ComposeFloatingWindow)
-        set(VIEW_MODEL_STORE_OWNER_KEY, this@ComposeFloatingWindow)
+        set(SAVED_STATE_REGISTRY_OWNER_KEY, this@ComposeFloatWindow)
+        set(VIEW_MODEL_STORE_OWNER_KEY, this@ComposeFloatWindow)
     }
 
     override val viewModelStore: ViewModelStore = ViewModelStore()
@@ -109,18 +109,16 @@ class ComposeFloatingWindow(
     var decorView: ViewGroup = ParentLayout(context)
     private lateinit var composeView: ComposeView
 
-    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val windowManager = context.getSystemService(WindowManager::class.java)
 
     fun setContent(content: @Composable () -> Unit) {
         setContentView(ComposeView(context).apply {
-            setViewTreeLifecycleOwner(this@ComposeFloatingWindow)
-            setViewTreeViewModelStoreOwner(this@ComposeFloatingWindow)
-            setViewTreeSavedStateRegistryOwner(this@ComposeFloatingWindow)
-            setViewTreeOnBackPressedDispatcherOwner(this@ComposeFloatingWindow)
+            setViewTreeLifecycleOwner(this@ComposeFloatWindow)
+            setViewTreeViewModelStoreOwner(this@ComposeFloatWindow)
+            setViewTreeSavedStateRegistryOwner(this@ComposeFloatWindow)
+            setViewTreeOnBackPressedDispatcherOwner(this@ComposeFloatWindow)
             setContent {
-                CompositionLocalProvider(
-                    LocalFloatingWindow provides this@ComposeFloatingWindow,
-                ) {
+                CompositionLocalProvider(LocalFloatWindow provides this@ComposeFloatWindow) {
                     content()
                 }
             }
@@ -204,6 +202,6 @@ class ComposeFloatingWindow(
     }
 }
 
-val LocalFloatingWindow = compositionLocalOf<ComposeFloatingWindow> {
-    error("ComposeFloatingWindow not provided. Please ensure you have supplied a value in the Composition tree via CompositionLocalProvider(LocalFloatingWindow).")
+val LocalFloatWindow = compositionLocalOf<ComposeFloatWindow> {
+    error("ComposeFloatWindow not provided. Please ensure you have supplied a value in the Composition tree via CompositionLocalProvider(LocalFloatWindow).")
 }
