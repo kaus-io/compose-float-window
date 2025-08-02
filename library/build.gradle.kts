@@ -52,8 +52,8 @@ publishing {
     publications {
         create<MavenPublication>("release") {
             groupId = "com.zxhhyj"
-            artifactId = "ComposeFloatWindow"
-            version = "1.0"
+            artifactId = "compose-float-window"
+            version = "1.0.1"
 
             afterEvaluate {
                 from(components["release"])
