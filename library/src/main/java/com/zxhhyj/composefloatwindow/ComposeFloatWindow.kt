@@ -41,7 +41,6 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -50,7 +49,7 @@ import kotlinx.coroutines.launch
 // copied form https://github.com/FunnySaltyFish/Transtation-KMP/composeApp/src/androidMain/kotlin/com/github/only52607/compose/window/ComposeFloatingWindow.kt
 
 class ComposeFloatWindow(
-    private val context: Context,
+    val context: Context,
     val windowParams: WindowManager.LayoutParams = WindowManager.LayoutParams().apply {
         height = WindowManager.LayoutParams.WRAP_CONTENT
         width = WindowManager.LayoutParams.WRAP_CONTENT
@@ -103,26 +102,25 @@ class ComposeFloatWindow(
 
     private var _showing = MutableStateFlow(false)
 
-    val showing: StateFlow<Boolean>
-        get() = _showing.asStateFlow()
+    val showing = _showing.asStateFlow()
 
     var decorView: ViewGroup = ParentLayout(context)
+
     private lateinit var composeView: ComposeView
 
     private val windowManager = context.getSystemService(WindowManager::class.java)
 
     fun setContent(content: @Composable () -> Unit) {
-        setContentView(ComposeView(context).apply {
+        val composeView = ComposeView(context).apply {
             setViewTreeLifecycleOwner(this@ComposeFloatWindow)
             setViewTreeViewModelStoreOwner(this@ComposeFloatWindow)
             setViewTreeSavedStateRegistryOwner(this@ComposeFloatWindow)
             setViewTreeOnBackPressedDispatcherOwner(this@ComposeFloatWindow)
             setContent {
-                CompositionLocalProvider(LocalFloatWindow provides this@ComposeFloatWindow) {
-                    content()
-                }
+                CompositionLocalProvider(LocalFloatWindow provides this@ComposeFloatWindow, content)
             }
-        })
+        }
+        setContentView(composeView)
     }
 
     private fun setContentView(view: ComposeView) {
