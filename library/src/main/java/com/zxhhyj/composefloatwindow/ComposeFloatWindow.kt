@@ -3,7 +3,9 @@ package com.zxhhyj.composefloatwindow
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.PixelFormat
+import android.os.Build
 import android.provider.Settings
 import android.view.Gravity
 import android.view.KeyEvent
@@ -11,9 +13,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.OnBackPressedDispatcherOwner
 import androidx.activity.setViewTreeOnBackPressedDispatcherOwner
+import androidx.annotation.MainThread
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Recomposer
@@ -40,13 +46,10 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-
-// copied from https://github.com/only52607/compose-floating-window/blob/main/library/src/main/java/com/github/only52607/compose/window/ComposeFloatingWindow.kt
-// copied form https://github.com/FunnySaltyFish/Transtation-KMP/composeApp/src/androidMain/kotlin/com/github/only52607/compose/window/ComposeFloatingWindow.kt
 
 class ComposeFloatWindow(
     val context: Context,
@@ -56,8 +59,7 @@ class ComposeFloatWindow(
         format = PixelFormat.TRANSLUCENT
         gravity = Gravity.START or Gravity.TOP
         windowAnimations = android.R.style.Animation_Dialog
-        flags = (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         if (context !is Activity) {
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         }
@@ -89,29 +91,34 @@ class ComposeFloatWindow(
 
     override val viewModelStore: ViewModelStore = ViewModelStore()
 
-    private var lifecycleRegistry: LifecycleRegistry = LifecycleRegistry(this)
+    private val lifecycleRegistry: LifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
 
-    private var savedStateRegistryController: SavedStateRegistryController =
+    private val savedStateRegistryController: SavedStateRegistryController =
         SavedStateRegistryController.create(this)
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
-    override val onBackPressedDispatcher: OnBackPressedDispatcher =
-        OnBackPressedDispatcher()
 
-    private var _showing = MutableStateFlow(false)
+    override val onBackPressedDispatcher: OnBackPressedDispatcher = OnBackPressedDispatcher()
 
+    private val _showing: MutableStateFlow<Boolean> = MutableStateFlow(false)
     val showing = _showing.asStateFlow()
 
-    var decorView: ViewGroup = ParentLayout(context)
+    val decorView: ViewGroup = ParentLayout(context)
 
-    private lateinit var composeView: ComposeView
+    private val composition = CompositionController()
+
+    private var pendingContent: (@Composable () -> Unit)? = null
+
+    private var onBackInvokedCallback: OnBackInvokedCallback? = null
 
     private val windowManager = context.getSystemService(WindowManager::class.java)
 
+    @MainThread
     fun setContent(content: @Composable () -> Unit) {
-        val composeView = ComposeView(context).apply {
+        pendingContent = content
+        val view = ComposeView(context.applicationContext).apply {
             setViewTreeLifecycleOwner(this@ComposeFloatWindow)
             setViewTreeViewModelStoreOwner(this@ComposeFloatWindow)
             setViewTreeSavedStateRegistryOwner(this@ComposeFloatWindow)
@@ -120,30 +127,16 @@ class ComposeFloatWindow(
                 CompositionLocalProvider(LocalFloatWindow provides this@ComposeFloatWindow, content)
             }
         }
-        setContentView(composeView)
+        composition.install(view)
     }
 
-    private fun setContentView(view: ComposeView) {
-        if (decorView.isNotEmpty()) {
-            decorView.removeAllViews()
-        }
-        composeView = view
-        decorView.addView(
-            view,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        )
-        update()
-    }
+    fun getContentView(): View = getContentViewOrNull()!!
 
-    fun getContentView() = getContentViewOrNull()!!
+    fun getContentViewOrNull(): View? = decorView.getChildAt(0)
 
-    fun getContentViewOrNull(): View? {
-        return decorView.getChildAt(0)
-    }
-
+    @MainThread
     fun show() {
-        if (isAvailable().not()) return
+        if (!isAvailable()) return
         require(decorView.isNotEmpty()) {
             "Content view cannot be empty"
         }
@@ -151,55 +144,174 @@ class ComposeFloatWindow(
             update()
             return
         }
-        decorView.getChildAt(0)?.takeIf { it is ComposeView }?.let { composeView ->
-            val reComposer = Recomposer(AndroidUiDispatcher.CurrentThread)
-            composeView.compositionContext = reComposer
-            lifecycleScope.launch(AndroidUiDispatcher.CurrentThread) {
-                reComposer.runRecomposeAndApplyChanges()
-            }
-        }
+        composition.attach()
         if (decorView.parent != null) {
             windowManager.removeViewImmediate(decorView)
         }
         windowManager.addView(decorView, windowParams)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-        _showing.update { true }
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        _showing.value = true
     }
 
+    @MainThread
     fun update() {
         if (!_showing.value) return
         windowManager.updateViewLayout(decorView, windowParams)
     }
 
+    @MainThread
     fun hide() {
         if (!_showing.value) return
-        _showing.update { false }
+        _showing.value = false
         windowManager.removeViewImmediate(decorView)
+        composition.detach()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+    }
+
+    @MainThread
+    fun rebuild() {
+        val content = pendingContent ?: return
+        val wasShowing = _showing.value
+        if (wasShowing) {
+            hide()
+        }
+        composition.close()
+        viewModelStore.clear()
+        if (decorView.isNotEmpty()) {
+            decorView.removeAllViews()
+        }
+        setContent(content)
+        if (wasShowing) {
+            show()
+        }
+    }
+
+    @MainThread
+    fun dispose() {
+        if (_showing.value) {
+            hide()
+        }
+        composition.close()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            unregisterOnBackInvokedCallbackIfPossible()
+        }
+        if (lifecycle.currentState != Lifecycle.State.DESTROYED) {
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        }
+        viewModelStore.clear()
+        _showing.value = false
     }
 
     fun isAvailable(): Boolean = Settings.canDrawOverlays(context)
 
     init {
+        savedStateRegistryController.performAttach()
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         enableSavedStateHandles()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerOnBackInvokedCallbackIfPossible()
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun registerOnBackInvokedCallbackIfPossible() {
+        if (onBackInvokedCallback != null) return
+        val activity = context.findActivity() ?: return
+        val callback = OnBackInvokedCallback { onBackPressedDispatcher.onBackPressed() }
+        activity.onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            callback
+        )
+        onBackInvokedCallback = callback
+    }
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun unregisterOnBackInvokedCallbackIfPossible() {
+        val callback = onBackInvokedCallback ?: return
+        val activity = context.findActivity() ?: return
+        activity.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
+        onBackInvokedCallback = null
+    }
+
+    private fun Context.findActivity(): Activity? {
+        var ctx: Context = this
+        while (ctx is ContextWrapper) {
+            if (ctx is Activity) return ctx
+            ctx = ctx.baseContext
+        }
+        return null
     }
 
     private inner class ParentLayout(context: Context) : FrameLayout(context) {
-        override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
-            return super.dispatchKeyEvent(event)
-        }
-
         override fun dispatchKeyEventPreIme(event: KeyEvent?): Boolean {
-            if (event?.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event?.action == KeyEvent.ACTION_UP && event.keyCode == KeyEvent.KEYCODE_BACK) {
                 onBackPressedDispatcher.onBackPressed()
+                return true
             }
             return super.dispatchKeyEventPreIme(event)
         }
     }
-}
 
-val LocalFloatWindow = compositionLocalOf<ComposeFloatWindow> {
-    error("ComposeFloatWindow not provided. Please ensure you have supplied a value in the Composition tree via CompositionLocalProvider(LocalFloatWindow).")
+    private inner class CompositionController {
+        private var composeView: ComposeView? = null
+        private var recomposer: Recomposer? = null
+        private var recomposeJob: Job? = null
+
+        fun install(view: ComposeView) {
+            composeView?.disposeComposition()
+            if (decorView.isNotEmpty()) {
+                decorView.removeAllViews()
+            }
+            composeView = view
+            decorView.addView(
+                view,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            if (_showing.value) {
+                attach()
+                update()
+            }
+        }
+
+        fun attach() {
+            val view = (decorView.getChildAt(0) as? ComposeView) ?: return
+            val current = recomposer ?: Recomposer(AndroidUiDispatcher.CurrentThread).also {
+                recomposer = it
+            }
+            if (view.compositionContext !== current) {
+                view.compositionContext = current
+            }
+            if (recomposeJob?.isActive != true) {
+                recomposeJob = lifecycleScope.launch(AndroidUiDispatcher.CurrentThread) {
+                    current.runRecomposeAndApplyChanges()
+                }
+            }
+        }
+
+        fun detach() {
+            recomposeJob?.cancel()
+            recomposeJob = null
+        }
+
+        fun close() {
+            recomposer?.close()
+            recomposer = null
+            composeView?.disposeComposition()
+            composeView = null
+            recomposeJob?.cancel()
+            recomposeJob = null
+        }
+    }
+
+    companion object {
+        val LocalFloatWindow = compositionLocalOf<ComposeFloatWindow> {
+            error("ComposeFloatWindow not provided. Please ensure you have supplied a value in the Composition tree via CompositionLocalProvider(LocalFloatWindow).")
+        }
+    }
 }
