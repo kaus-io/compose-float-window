@@ -30,7 +30,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("com.gitee.ZXHHYJ:library:<version>")
+    implementation("com.zxhhyj:library:<version>")
 }
 ```
 
