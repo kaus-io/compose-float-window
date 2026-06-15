@@ -30,7 +30,7 @@ dependencyResolutionManagement {
 
 // app/build.gradle.kts
 dependencies {
-    implementation("com.zxhhyj:library:<version>")
+    implementation("com.zxhhyj:compose-float-window:<version>")
 }
 ```
 

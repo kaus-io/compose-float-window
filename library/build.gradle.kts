@@ -76,10 +76,10 @@ configure<MavenPublishBaseExtension> {
     publishToMavenCentral()
     signAllPublications()
 
-    coordinates(group.toString(), project.name, version.toString())
+    coordinates(group.toString(), "compose-float-window", version.toString())
 
     pom {
-        name = project.name.split("-").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+        name = "ComposeFloatWindow"
         description = "A Compose-based Android floating window library with smooth drag, snap and lifecycle handling."
         inceptionYear = "2024"
         url = "https://github.com/kaus-io/compose-float-window"
