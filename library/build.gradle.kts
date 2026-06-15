@@ -61,6 +61,17 @@ kotlin {
     }
 }
 
+// AGP 9.2.1 内置的 Dokka 1.4.32 携带的 com.intellij.util.lang.JavaVersion.parse
+// 不能解析带 patch 号的 JDK 版本号（如 "25.0.2"），运行 :library:javaDocReleaseGeneration
+// 时会抛 IllegalArgumentException。resolutionStrategy / setFrom 都被 detachedConfiguration
+// + fromDisallowChanges 锁死，doFirst 改 java.version 也无效（JDK 25 缓存住了）。
+// 折中方案：把 JavaDocGenerationTask 整个替换成一个空的 noop 任务，保留 Maven 发布里的
+// javadoc.jar 接入点（publish 任务依赖还在），但不真去跑 Dokka。
+// 等待 AGP 上游修这个 bug 之后再恢复。
+tasks.withType<com.android.build.gradle.tasks.JavaDocGenerationTask>().configureEach {
+    enabled = false
+}
+
 configure<MavenPublishBaseExtension> {
     publishToMavenCentral()
     signAllPublications()
