@@ -2,6 +2,10 @@
 
 一个基于 Jetpack Compose 的 Android 悬浮窗库。把 Compose UI 挂到 `WindowManager` 上，并对外暴露完整的 `Lifecycle` / `ViewModelStore` / `SavedStateRegistry` / `OnBackPressedDispatcher`，与 Android 标准的 Lifecycle.State 契约一致。
 
+> **致谢 / Acknowledgements**
+> 本库的 `ComposeFloatWindow` 核心代码源自 [only52607/compose-floating-window](https://github.com/only52607/compose-floating-window)（也可见于 [Transtation-KMP](https://github.com/FunnySaltyFish/Transtation-KMP) 的 `composeApp` 模块），在原实现基础上对生命周期、API 命名空间与发布配置做了较大幅度的重构。
+> Original `ComposeFloatingWindow` implementation copied from [only52607/compose-floating-window](https://github.com/only52607/compose-floating-window/blob/main/library/src/main/java/com/github/only52607/compose/window/ComposeFloatingWindow.kt) (also mirrored in [Transtation-KMP](https://github.com/FunnySaltyFish/Transtation-KMP)).
+
 ## 特性
 
 - **Compose 原生**：直接在浮窗里写 `@Composable`，无需自定义 `View`。

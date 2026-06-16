@@ -1,4 +1,4 @@
-package com.zxhhyj.composefloatwindow
+﻿package com.zxhhyj.composefloatwindow
 
 import android.app.Application
 import android.os.Build
@@ -44,7 +44,7 @@ class ComposeFloatWindowTest {
     fun `lifecycle is CREATED after construction`() {
         val window = ComposeFloatWindow(context)
         assertEquals(Lifecycle.State.CREATED, window.lifecycle.currentState)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -53,7 +53,7 @@ class ComposeFloatWindowTest {
         window.setContent { }
         window.show()
         assertEquals(Lifecycle.State.RESUMED, window.lifecycle.currentState)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -63,7 +63,7 @@ class ComposeFloatWindowTest {
         window.show()
         window.hide()
         assertEquals(Lifecycle.State.CREATED, window.lifecycle.currentState)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -74,7 +74,7 @@ class ComposeFloatWindowTest {
         window.hide()
         window.show()
         assertEquals(Lifecycle.State.RESUMED, window.lifecycle.currentState)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -94,7 +94,7 @@ class ComposeFloatWindowTest {
         window.decorView.dispatchKeyEventPreIme(backEvent)
 
         assertTrue(backPressed)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -114,7 +114,7 @@ class ComposeFloatWindowTest {
         window.decorView.dispatchKeyEventPreIme(backEvent)
 
         assertFalse(backPressed)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -127,7 +127,7 @@ class ComposeFloatWindowTest {
         val consumed = window.decorView.dispatchKeyEventPreIme(backEvent)
 
         assertTrue(consumed)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -147,7 +147,7 @@ class ComposeFloatWindowTest {
         window.decorView.dispatchKeyEventPreIme(otherEvent)
 
         assertFalse(backPressed)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -156,34 +156,50 @@ class ComposeFloatWindowTest {
         val first = window.decorView
         val second = window.decorView
         assertSame(first, second)
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `dispose brings lifecycle to DESTROYED`() {
+    fun `release brings lifecycle to DESTROYED`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
         window.show()
-        window.dispose()
+        window.release()
         assertEquals(Lifecycle.State.DESTROYED, window.lifecycle.currentState)
     }
 
     @Test
-    fun `dispose is idempotent`() {
+    fun `release is idempotent`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
         window.show()
-        window.dispose()
-        window.dispose()
+        window.release()
+        window.release()
         assertEquals(Lifecycle.State.DESTROYED, window.lifecycle.currentState)
     }
 
     @Test
-    fun `dispose when not showing still reaches DESTROYED`() {
+    fun `release when not showing still reaches DESTROYED`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
-        window.dispose()
+        window.release()
         assertEquals(Lifecycle.State.DESTROYED, window.lifecycle.currentState)
+    }
+
+    @Test
+    fun `show after release throws because lifecycle is DESTROYED`() {
+        val window = ComposeFloatWindow(context)
+        window.setContent { }
+        window.show()
+        window.hide()
+        window.release()
+        val ex = try {
+            window.show()
+            null
+        } catch (e: IllegalStateException) {
+            e
+        }
+        assertNotNull("show() after release() should throw", ex)
     }
 
     @Test
@@ -195,7 +211,7 @@ class ComposeFloatWindowTest {
         assertTrue(window.showing.value)
         window.hide()
         assertFalse(window.showing.value)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -211,7 +227,7 @@ class ComposeFloatWindowTest {
         val secondCompositionContext = secondContent?.compositionContext
         assertNotNull(firstCompositionContext)
         assertSame(firstCompositionContext, secondCompositionContext)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -225,7 +241,7 @@ class ComposeFloatWindowTest {
         assertNotNull(firstContent)
         assertNotNull(secondContent)
         assertTrue(window.showing.value)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -234,73 +250,73 @@ class ComposeFloatWindowTest {
         window.setContent { }
         val view = window.getContentView()
         assertNotNull(view)
-        window.dispose()
+        window.release()
     }
 
     @Test
     fun `getContentViewOrNull returns null before setContent`() {
         val window = ComposeFloatWindow(context)
         assertNull(window.getContentViewOrNull())
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `rebuild before setContent is a no-op`() {
+    fun `reset before setContent is a no-op`() {
         val window = ComposeFloatWindow(context)
-        window.rebuild()
+        window.reset()
         assertNull(window.getContentViewOrNull())
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `rebuild before show creates fresh content`() {
+    fun `reset before show creates fresh content`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
-        window.rebuild()
+        window.reset()
         assertNotNull(window.getContentViewOrNull())
         assertFalse(window.showing.value)
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `rebuild during show keeps window visible`() {
+    fun `reset during show keeps window visible`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
         window.show()
         assertTrue(window.showing.value)
-        window.rebuild()
-        assertTrue("Window should still be showing after rebuild", window.showing.value)
+        window.reset()
+        assertTrue("Window should still be showing after reset", window.showing.value)
         assertEquals(Lifecycle.State.RESUMED, window.lifecycle.currentState)
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `rebuild clears the recomposer and creates a new one`() {
+    fun `reset clears the recomposer and creates a new one`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
         window.show()
         val first = (window.getContentViewOrNull() as? ComposeView)?.compositionContext
-        window.rebuild()
+        window.reset()
         val second = (window.getContentViewOrNull() as? ComposeView)?.compositionContext
         assertNotNull(first)
         assertNotNull(second)
-        assertFalse("Recomposer should be a new instance after rebuild", first === second)
-        window.dispose()
+        assertFalse("Recomposer should be a new instance after reset", first === second)
+        window.release()
     }
 
     @Test
-    fun `rebuild is idempotent`() {
+    fun `reset is idempotent`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
-        window.rebuild()
-        window.rebuild()
-        window.rebuild()
+        window.reset()
+        window.reset()
+        window.reset()
         assertNotNull(window.getContentViewOrNull())
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `rebuild cycles with the new viewModelFactory API do not throw`() {
+    fun `reset cycles with the new viewModelFactory API do not throw`() {
         val window = ComposeFloatWindow(context)
         window.setContent {
             viewModel<TestViewModel>(
@@ -313,13 +329,13 @@ class ComposeFloatWindowTest {
             )
         }
         window.show()
-        repeat(3) { window.rebuild() }
+        repeat(3) { window.reset() }
         assertTrue(window.showing.value)
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `multiple show rebuild cycles with viewModel do not throw`() {
+    fun `multiple show reset cycles with viewModel do not throw`() {
         val window = ComposeFloatWindow(context)
         repeat(5) {
             window.setContent {
@@ -335,7 +351,7 @@ class ComposeFloatWindowTest {
             window.show()
             window.hide()
         }
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -344,7 +360,7 @@ class ComposeFloatWindowTest {
         window.setContent { }
         val contentView = window.getContentView() as ComposeView
         assertSame(context, contentView.context)
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -357,7 +373,7 @@ class ComposeFloatWindowTest {
         window.setContent { }
         window.show()
         window.hide()
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -369,7 +385,7 @@ class ComposeFloatWindowTest {
         val window = ComposeFloatWindow(wrapped)
         window.setContent { }
         window.show()
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -378,11 +394,11 @@ class ComposeFloatWindowTest {
         window.setContent { }
         window.show()
         window.hide()
-        window.dispose()
+        window.release()
     }
 
     @Test
-    fun `lifecycle-bound callback is auto-removed after dispose`() {
+    fun `lifecycle-bound callback is auto-removed after release`() {
         val window = ComposeFloatWindow(context)
         window.setContent { }
         window.show()
@@ -398,7 +414,7 @@ class ComposeFloatWindowTest {
         window.decorView.dispatchKeyEventPreIme(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK))
         assertEquals(1, backPressed)
 
-        window.dispose()
+        window.release()
 
         window.decorView.dispatchKeyEventPreIme(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK))
         assertEquals(1, backPressed)
@@ -409,7 +425,7 @@ class ComposeFloatWindowTest {
         val window = ComposeFloatWindow(context)
         window.setContent { }
         window.update()
-        window.dispose()
+        window.release()
     }
 
     @Test
@@ -419,7 +435,7 @@ class ComposeFloatWindowTest {
         window.show()
         window.hide()
         window.update()
-        window.dispose()
+        window.release()
     }
 
     @Test

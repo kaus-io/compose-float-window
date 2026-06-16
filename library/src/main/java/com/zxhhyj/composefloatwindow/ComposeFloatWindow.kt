@@ -52,13 +52,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 一个悬浮窗 Compose 容器，基于 [WindowManager] 显示系统级悬浮窗。
+ * 一个基于 Compose 的系统级悬浮窗容器。
  *
- * 与 Activity 不同的是，浮窗本身不持有 [android.view.View] 树意义上的「宿主 Activity」，
- * 但本类完整实现了 [Lifecycle]、[ViewModelStoreOwner]、[SavedStateRegistryOwner]、
- * [OnBackPressedDispatcherOwner] 这一整套与 Compose / AndroidX 生命周期协作的接口，
- * 因此可以直接在 [setContent] 中使用 `rememberSaveable` / `viewModel` /
- * `LifecycleResumeEffect` / `BackHandler` 等 API，不会污染宿主 Activity 的状态。
+ * 把 Compose UI 挂到系统窗口上，并对外暴露完整的生命周期能力 —— 跟宿主 Activity 一样，
+ * 在里面使用 `rememberSaveable` / `viewModel` / `LifecycleResumeEffect` / `BackHandler`
+ * 等 API 都不会污染宿主 Activity 的状态。
  *
  * 用法示例：
  * ```
@@ -66,13 +64,13 @@ import kotlinx.coroutines.launch
  * window.setContent { MyFloatingUI() }
  * window.show()      // 显示
  * window.hide()      // 隐藏但保留状态
- * window.rebuild()   // 重建（清空 ViewModel 等）
- * window.dispose()   // 彻底销毁
+ * window.reset()     // 重建（清空 ViewModel 等）
+ * window.release()   // 彻底释放，之后不可再用
  * ```
  *
- * @param context 任意 [Context]，首选 Activity（用于 Android 13+ 的返回键回调注册）。
- * @param windowParams 浮窗布局参数，默认是 WRAP_CONTENT + FLAG_NOT_TOUCH_MODAL；
- *   当 [context] 不是 Activity 时会自动加上 `TYPE_APPLICATION_OVERLAY`（需要 SYSTEM_ALERT_WINDOW 权限）。
+ * @param context Context。
+ * @param windowParams 浮窗的布局参数；非 Activity 上下文时会自动加上系统级悬浮窗的类型标记，
+ *   因此需要先在系统设置里授予「显示在其他应用上层」权限。
  */
 class ComposeFloatWindow(
     val context: Context,
@@ -127,13 +125,12 @@ class ComposeFloatWindow(
 
     private val _showing: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
-    /** 浮窗当前是否处于「显示」状态（已调用 [show] 且未调用 [hide] / [dispose]）。 */
+    /** 浮窗当前是否正在显示。 */
     val showing = _showing.asStateFlow()
 
-    /** 浮窗根 [ViewGroup]，所有 Compose 内容挂在这上面；默认是 [FrameLayout] 子类并拦截返回键。 */
     val decorView: ViewGroup = ParentLayout(context)
 
-    private val composition = CompositionController()
+    private val composition: CompositionController = CompositionController()
 
     private var pendingContent: (@Composable () -> Unit)? = null
 
@@ -144,16 +141,23 @@ class ComposeFloatWindow(
     /**
      * 设置或替换浮窗里的 Compose 内容。
      *
-     * 多次调用会替换上一次的 [Composable]，但**不会**清空已有的 [viewModelStore] /
-     * [rememberSaveable] 状态。如需彻底重建，请使用 [rebuild]。
+     * 调用此方法会**完整重置**浮窗内部状态。
      *
-     * 必须在主线程调用。
-     *
-     * @param content 浮窗内的根 Composable；内部会自动通过 [LocalFloatWindow] 暴露当前 [ComposeFloatWindow] 实例。
+     * @param content 浮窗内的根 Composable；
      */
     @MainThread
     fun setContent(content: @Composable () -> Unit) {
         pendingContent = content
+        val wasShowing = _showing.value
+        if (wasShowing) {
+            windowManager.removeViewImmediate(decorView)
+            composition.detach()
+        }
+        composition.close()
+        viewModelStore.clear()
+        if (decorView.isNotEmpty()) {
+            decorView.removeAllViews()
+        }
         val view = ComposeView(context.applicationContext).apply {
             setViewTreeLifecycleOwner(this@ComposeFloatWindow)
             setViewTreeViewModelStoreOwner(this@ComposeFloatWindow)
@@ -164,29 +168,29 @@ class ComposeFloatWindow(
             }
         }
         composition.install(view)
+        if (wasShowing) {
+            windowManager.addView(decorView, windowParams)
+            composition.attach()
+        }
     }
 
     /**
-     * 取出内部 [ComposeView]，未调用 [setContent] 时抛 [NullPointerException]。
+     * 取出内部承载 Compose 内容的 View。
+     * @throws NullPointerException 当 [setContent] 还没被调用时。
      * @see getContentViewOrNull
      */
     fun getContentView(): View = getContentViewOrNull()!!
 
     /**
-     * 取出内部 [ComposeView]，未调用 [setContent] 时返回 null。
+     * 取出内部承载 Compose 内容的 View。[setContent] 还没被调用时返回 null。
      */
     fun getContentViewOrNull(): View? = decorView.getChildAt(0)
 
     /**
      * 显示浮窗。
      *
-     * 行为：
-     * - 权限检查失败（[isAvailable] 返回 false）时静默 no-op；
-     * - 已经在显示时退化为 [update]（刷新 [windowParams]）；
-     * - 否则把 [decorView] 挂到 [WindowManager]，生命周期走到 `ON_START → ON_RESUME`，
-     *   内部 [Recomposer] 开始工作。
-     *
-     * 必须在主线程调用。
+     * - 如果没有系统级悬浮窗权限（[isAvailable] 为 false），此方法什么也不做；
+     * - 否则挂载到 WindowManager 上，浮窗开始可见并响应生命周期。
      */
     @MainThread
     fun show() {
@@ -195,7 +199,6 @@ class ComposeFloatWindow(
             "Content view cannot be empty"
         }
         if (_showing.value) {
-            update()
             return
         }
         composition.attach()
@@ -209,10 +212,8 @@ class ComposeFloatWindow(
     }
 
     /**
-     * 用最新的 [windowParams] 刷新浮窗布局，未在显示时 no-op。
-     * 适用于用户拖动后保存位置、半透明动画等场景。
-     *
-     * 必须在主线程调用。
+     * 用最新的 [windowParams] 刷新浮窗布局，例如拖动后保存的新位置或透明度变化。
+     * 当前没有显示时此方法什么也不做。
      */
     @MainThread
     fun update() {
@@ -221,12 +222,7 @@ class ComposeFloatWindow(
     }
 
     /**
-     * 隐藏浮窗，但**保留** [ViewModelStore] / [rememberSaveable] / [Recomposer] 等状态。
-     * 再次调用 [show] 会从相同状态恢复显示。
-     *
-     * 生命周期走到 `ON_PAUSE → ON_STOP`。
-     *
-     * 必须在主线程调用。
+     * 隐藏浮窗，但**保留**所有状态。
      */
     @MainThread
     fun hide() {
@@ -239,66 +235,39 @@ class ComposeFloatWindow(
     }
 
     /**
-     * 重建浮窗内部状态：清空 [viewModelStore]、关闭旧的 [Recomposer] 与 composition，
-     * 然后用最近一次 [setContent] 提供的 Composable 重新挂载。
-     *
-     * 显示中调用会自动 [hide] → 重建 → 再 [show]，重建结束后仍然处于显示状态。
-     * 隐藏中调用同样适用（直接重建）。
-     *
-     * 与 [hide] 的区别：[hide] 保留所有状态，本方法**全部丢弃**。
-     *
-     * 注意：因为 [viewModelStore] 会被清空，
-     * 依赖 [androidx.lifecycle.viewmodel.compose.viewModel] 创建的 ViewModel 会丢失。
-     * 建议在 ViewModel 内使用 `viewModelFactory { initializer { createSavedStateHandle() } }`
-     * 等新 API（而不是旧的 `AbstractSavedStateViewModelFactory`），以避免重建时 SavedStateProvider 冲突。
-     *
-     * 必须在主线程调用。
+     * 重建浮窗的内部状态。
      */
     @MainThread
-    fun rebuild() {
+    fun reset() {
         val content = pendingContent ?: return
-        val wasShowing = _showing.value
-        if (wasShowing) {
-            hide()
-        }
-        composition.close()
-        viewModelStore.clear()
-        if (decorView.isNotEmpty()) {
-            decorView.removeAllViews()
-        }
         setContent(content)
-        if (wasShowing) {
-            show()
-        }
     }
 
     /**
-     * 彻底销毁浮窗，释放所有资源：composition、[Recomposer]、[viewModelStore]、
-     * [savedStateRegistry]、Android 13+ 的 [OnBackInvokedCallback]，并将生命周期走到 `ON_DESTROY`。
-     *
-     * 调用之后**不应再使用**本实例。需要在 [Lifecycle.State.DESTROYED] 之后复用请重新 [setContent]。
-     *
-     * 必须在主线程调用。
+     * 彻底释放浮窗，释放所有资源。
      */
     @MainThread
-    fun dispose() {
+    fun release() {
+        if (lifecycleRegistry.currentState == Lifecycle.State.DESTROYED) return
         if (_showing.value) {
-            hide()
+            windowManager.removeViewImmediate(decorView)
+            _showing.value = false
         }
         composition.close()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             unregisterOnBackInvokedCallbackIfPossible()
         }
-        if (lifecycle.currentState != Lifecycle.State.DESTROYED) {
+        if (lifecycleRegistry.currentState != Lifecycle.State.DESTROYED) {
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         }
         viewModelStore.clear()
-        _showing.value = false
     }
 
     /**
-     * 当前是否有「系统级悬浮窗」权限。Android 6.0+ 需要用户去系统设置里授权 `SYSTEM_ALERT_WINDOW`。
-     * [show] 在权限缺失时会静默 no-op，因此调用方应在 UI 层先检查这个标志。
+     * 当前是否已获得「显示在其他应用上层」权限。
+     *
+     * Android 6.0+ 之后该权限必须由用户去系统设置里手动授予。
+     * [show] 在权限缺失时会静默跳过，因此调用方最好在 UI 层先检查这个标志并提示用户开启。
      */
     fun isAvailable(): Boolean = Settings.canDrawOverlays(context)
 
@@ -369,7 +338,7 @@ class ComposeFloatWindow(
                     FrameLayout.LayoutParams.WRAP_CONTENT
                 )
             )
-            if (_showing.value) {
+            if (_showing.value && decorView.parent != null) {
                 attach()
                 update()
             }
@@ -409,7 +378,7 @@ class ComposeFloatWindow(
         /**
          * 在浮窗的 Composable 树里拿到当前 [ComposeFloatWindow] 实例。
          *
-         * 通过 [setContent] 注入，调用方无须显式使用 [androidx.compose.runtime.CompositionLocalProvider]：
+         * 通过 [setContent] 自动注入，调用方无须显式包装 CompositionLocalProvider：
          * ```
          * ComposeFloatWindow(context).apply {
          *     setContent {
