@@ -13,7 +13,7 @@
 - **完整所有权**：自己持有 `ViewModelStore` / `SavedStateRegistry` / `OnBackPressedDispatcher`，不污染宿主 Activity 的状态。
 - **权限检测封装**：`isAvailable()` 包装 `Settings.canDrawOverlays`。
 - **轻量依赖**：仅依赖 `androidx.activity` / `androidx.core` / `androidx.appcompat`，不强制带入 Compose BOM。
-- **`Recomposer` 自管理**：内部保存的 `Recomposer` 在 `show()` / `hide()` 复用，仅在 `dispose()` 时关闭，避免协程泄漏；`rebuild()` 显式重建。
+- **`Recomposer` 自管理**：内部保存的 `Recomposer` 在 `show()` / `hide()` 复用，避免协程泄漏；在 `setContent()` / `reset()` / `release()` 时会关闭并重建。
 
 ## 要求
 
@@ -98,12 +98,12 @@ fun CloseButton() {
 | `windowParams` | `WindowManager.LayoutParams`（构造参数） | 位置、宽高、动画等。可在外部直接修改后调用 `update()` 刷新 |
 | `showing` | `StateFlow<Boolean>` | 当前是否显示 |
 | `decorView` | `ViewGroup` | 实际挂到 `WindowManager` 的根容器 |
-| `setContent(content)` | 方法 | 设置 Compose 内容（保存该闭包，供 `rebuild()` 复用） |
+| `setContent(content)` | 方法 | 设置或替换 Compose 内容。每次调用都会**完整重置**内部状态（清空 `ViewModelStore`、关闭并重建 `Recomposer`），并复用上次传入的闭包作为后续 `reset()` 的内容。 |
 | `show()` | 方法 | 添加到 `WindowManager`，Lifecycle 推到 `RESUMED` |
 | `hide()` | 方法 | 从 `WindowManager` 移除，Lifecycle 收缩到 `CREATED` |
 | `update()` | 方法 | 重新提交 `windowParams`（拖动后调用） |
-| `rebuild()` | 方法 | 重建 `Recomposer` / `ViewModelStore` / 组合树（用上次 `setContent` 的闭包），原状态显示时自动恢复显示。**`show` / `hide` 保留状态；`rebuild` 重置状态；`dispose` 释放。** |
-| `dispose()` | 方法 | 释放资源，推到 `DESTROYED`，清理 `ViewModelStore` / `SavedStateRegistry` / `Recomposer` |
+| `reset()` | 方法 | 重建 `Recomposer` / `ViewModelStore` / 组合树（等同于再次调用 `setContent(上次的内容)`），原状态显示时自动恢复显示。**`show` / `hide` 保留状态；`reset` 重置状态；`release` 释放。** |
+| `release()` | 方法 | 释放资源，推到 `DESTROYED`，清理 `ViewModelStore` / `Recomposer` |
 | `isAvailable()` | 方法 | 检查 `SYSTEM_ALERT_WINDOW` 权限 |
 | `getContentView()` / `getContentViewOrNull()` | 方法 | 取得内部 `ComposeView` |
 
@@ -113,7 +113,7 @@ fun CloseButton() {
 val LocalFloatWindow: ProvidableCompositionLocal<ComposeFloatWindow>
 ```
 
-在 `setContent { ... }` 闭包内可拿到当前 `ComposeFloatWindow` 实例，便于内部调用 `show()` / `hide()` / `update()` / `dispose()`。
+在 `setContent { ... }` 闭包内可拿到当前 `ComposeFloatWindow` 实例，便于内部调用 `show()` / `hide()` / `update()` / `release()`。
 
 ## 生命周期
 
@@ -122,14 +122,14 @@ val LocalFloatWindow: ProvidableCompositionLocal<ComposeFloatWindow>
 | 构造 | `ON_CREATE` | `INITIALIZED → CREATED` |
 | `show()` | `ON_START`、`ON_RESUME` | `CREATED → STARTED → RESUMED` |
 | `hide()` | `ON_PAUSE`、`ON_STOP` | `RESUMED → STARTED → CREATED` |
-| `rebuild()` | 重新构造 | 状态不变（若显示则重新走 `STARTED → RESUMED`，内部 `Recomposer` / `ViewModelStore` 全部清空） |
-| `dispose()` | `ON_DESTROY` | `CREATED → DESTROYED`（+ 清理 `ViewModelStore` / `SavedStateRegistry` / `Recomposer`） |
+| `reset()` | 重新构造 | 状态不变（若显示则重新走 `STARTED → RESUMED`，内部 `Recomposer` / `ViewModelStore` 全部清空） |
+| `release()` | `ON_DESTROY` | `CREATED → DESTROYED`（+ 清理 `ViewModelStore` / `Recomposer`） |
 
 注意：
 
 - `lifecycleScope` 会随 `DESTROYED` 自动取消，挂在其上的协程也会停。
-- `dispose()` 之后 Lifecycle 已到 `DESTROYED`，**不可再 `show()`**。如需复用请新建一个 `ComposeFloatWindow` 实例（与 `Activity` 销毁后不能复活同义）。
-- `dispose()` 不会自动调用 `show()` 或 `hide()`，调用方需自行保证顺序。
+- `release()` 之后 Lifecycle 已到 `DESTROYED`，**不可再 `show()`**。如需复用请新建一个 `ComposeFloatWindow` 实例（与 `Activity` 销毁后不能复活同义）。
+- `release()` 不会自动调用 `show()` 或 `hide()`，调用方需自行保证顺序。
 
 ## 拖动示例
 
@@ -189,7 +189,7 @@ class FloatService : Service() {
     }
 
     override fun onDestroy() {
-        floatWindow.dispose()
+        floatWindow.release()
         super.onDestroy()
     }
 }
